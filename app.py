@@ -4,10 +4,15 @@ import requests
 
 app = Flask(__name__)
 
-# --- BRANDED MENU & FOOTER ---
+# --- IN-MEMORY DATABASE ---
+# This remembers which users are typing a grievance
+user_states = {} 
+# This stores the actual submitted grievances
+grievances_db = [] 
+
+# --- ULTRA CLEAN MAIN MENU ---
 main_menu_text = (
     "🚌 ✨ *AEC Smart Transit System* ✨ 🚌\n"
-    "_Your Digital Campus Companion_\n"
     "━━━━━━━━━━━━━━━━━━━━\n\n"
     "👇 *Please select an option:*\n\n"
     "🗺️ *1* ➔ To AEC (CF / Ganeshguri)\n"
@@ -19,92 +24,69 @@ main_menu_text = (
     "👋 *7* ➔ Exit"
 )
 
-# Standard footer for regular menus
 footer = (
     "\n\n━━━━━━━━━━━━━━━━━━━━\n"
-    "↩️ _Reply *0* to return to the Main Menu_"
+    "↩️ _Reply *0* for Main Menu_"
 )
 
 @app.route("/bot", methods=['POST'])
 def bot():
     incoming_msg = request.values.get('Body', '').lower().strip()
+    sender_number = request.values.get('From', 'Unknown')
+    
     resp = MessagingResponse()
     msg = resp.message()
     
-    # --- 1. TO AEC FROM CHURCH FIELD / GANESHGURI ---
-    if incoming_msg == '1':
+    # --- SECRET ADMIN PANEL ---
+    # Type admin99 to see all collected grievances
+    if incoming_msg == 'admin99':
+        if len(grievances_db) == 0:
+            msg.body("📂 *Admin Panel*\n\nNo grievances have been submitted yet." + footer)
+        else:
+            admin_text = "📂 *Admin Panel - Live Grievances*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            for index, g in enumerate(grievances_db):
+                admin_text += f"🗣️ *Student {index + 1}:* {g}\n\n"
+            msg.body(admin_text + footer)
+        return str(resp)
+
+    # --- GRIEVANCE CATCHER LOGIC ---
+    # Check if this user just pressed 6 and is currently typing their grievance
+    if user_states.get(sender_number) == 'waiting_for_grievance':
+        if incoming_msg in ['0', 'menu', 'exit']:
+            # User canceled the grievance submission
+            user_states[sender_number] = 'normal'
+            msg.body(main_menu_text)
+            return str(resp)
+            
+        # Save their message to the database
+        grievances_db.append(incoming_msg)
+        
+        # Reset their state back to normal
+        user_states[sender_number] = 'normal'
+        
         msg.body(
-            "🗺️ *To AEC (from Church Field / Ganeshguri)*\n"
-            "_Regular Weekday Schedule_\n\n"
-            "📍 *Via Ganeshguri ➔ Zoo Road:*\n"
-            "  • 7:00 AM\n  • 8:00 AM\n\n"
-            "📍 *Via Ganeshguri ➔ Highway:*\n"
-            "  • 7:00 AM\n  • 8:10 AM\n\n"
-            "📍 *Direct from Church Field:*\n"
-            "  • 11:40 AM  |  • 4:20 PM\n"
-            "  • 5:30 PM   |  • 7:20 PM\n"
-            "  • 7:45 PM   |  • 8:15 PM\n\n"
-            "🌟 *Special Route*\n"
-            "_(CF ➔ Paltan ➔ Ganeshguri ➔ Highway)_\n"
-            "  • 9:40 AM" 
+            "✅ *Grievance Submitted Successfully*\n\n"
+            "Thank you. Your feedback has been securely logged and sent directly to Arnab Anubhav Bora for review.\n\n"
+            "👨‍💻 _System built by Arindam Goswami_"
             + footer
         )
+        return str(resp)
+
+    # --- 1. TO AEC FROM CHURCH FIELD / GANESHGURI ---
+    if incoming_msg == '1':
+        msg.body("🗺️ *To AEC (from CF / Ganeshguri)*\n_Regular Weekday Schedule_\n\n📍 *Via Ganeshguri ➔ Zoo Road:*\n  • 7:00 AM | • 8:00 AM\n\n📍 *Via Ganeshguri ➔ Highway:*\n  • 7:00 AM | • 8:10 AM\n\n📍 *Direct from Church Field:*\n  • 11:40 AM | • 4:20 PM\n  • 5:30 PM  | • 7:20 PM\n  • 7:45 PM  | • 8:15 PM\n\n🌟 *Special Route (9:40 AM)*\n_(CF ➔ Paltan ➔ Ganesh ➔ Highway)_" + footer)
         
     # --- 2. TO AEC FROM PALTAN BAZAR ---
     elif incoming_msg == '2':
-        msg.body(
-            "🏙️ *To AEC (from Paltan Bazar)*\n"
-            "_Regular Weekday Schedule_\n\n"
-            "⚠️ *NOTE:* Leaves from Paltan Bazar ➔ Pan Bazar Bus Stop. (Does NOT start from CF).\n\n"
-            "⏰ *Timings:*\n"
-            "  • 9:30 AM   |  • 11:20 AM\n"
-            "  • 1:45 PM   |  • 2:30 PM\n"
-            "  • 3:00 PM   |  • 3:30 PM\n"
-            "  • 6:00 PM" 
-            + footer
-        )
+        msg.body("🏙️ *To AEC (from Paltan Bazar)*\n_Regular Weekday Schedule_\n\n⚠️ *NOTE:* Starts from Pan Bazar Stop.\n\n⏰ *Timings:*\n  • 9:30 AM | • 11:20 AM\n  • 1:45 PM | • 2:30 PM\n  • 3:00 PM | • 3:30 PM\n  • 6:00 PM" + footer)
         
     # --- 3. LEAVING AEC (TO CITY) ---
     elif incoming_msg == '3':
-        msg.body(
-            "🛣️ *Leaving AEC (To City)*\n"
-            "_Regular Weekday Schedule_\n\n"
-            "🌅 *Morning:*\n"
-            "  • 7:50 AM   |  • 8:30 AM\n"
-            "  • 9:50 AM   |  • 10:15 AM\n\n"
-            "☀️ *Afternoon:*\n"
-            "  • 12:10 PM  |  • 12:20 PM _(Highway)_\n"
-            "  • 1:10 PM _(Guwahati Club)_\n"
-            "  • 1:20 PM _(Highway)_\n"
-            "  • 3:00 PM   |  • 4:05 PM _(Highway)_\n"
-            "  • 4:15 PM\n\n"
-            "🌙 *Evening:*\n"
-            "  • 5:00 PM   |  • 6:00 PM\n"
-            "  • 6:50 PM   |  • 7:10 PM\n"
-            "  • 8:30 PM   |  • 8:50 PM\n"
-            "  • 9:00 PM" 
-            + footer
-        )
+        msg.body("🛣️ *Leaving AEC (To City)*\n_Regular Weekday Schedule_\n\n🌅 *Morning:*\n  • 7:50 AM | • 8:30 AM\n  • 9:50 AM | • 10:15 AM\n\n☀️ *Afternoon:*\n  • 12:10 PM | • 12:20 PM (H)\n  • 1:10 PM (GC) | • 1:20 PM (H)\n  • 3:00 PM | • 4:05 PM (H)\n  • 4:15 PM\n\n🌙 *Evening:*\n  • 5:00 PM | • 6:00 PM\n  • 6:50 PM | • 7:10 PM\n  • 8:30 PM | • 8:50 PM\n  • 9:00 PM" + footer)
 
     # --- 4. HOLIDAY SCHEDULE ---
     elif incoming_msg == '4':
-        msg.body(
-            "🌴 *Holiday Schedule*\n"
-            "_For Sundays & Official Holidays_\n\n"
-            "⬇️ *Towards AEC:*\n"
-            "  • 7:30 AM _(Paltan Bazar)_\n"
-            "  • 10:40 AM _(Paltan Bazar)_\n"
-            "  • 2:30 PM _(Paltan Bazar)_\n"
-            "  • 5:10 PM _(Church Field)_\n"
-            "  • 8:00 PM _(Church Field)_\n\n"
-            "⬆️ *Leaving AEC:*\n"
-            "  • 9:15 AM\n"
-            "  • 12:15 PM _(Highway)_\n"
-            "  • 3:45 PM\n"
-            "  • 6:40 PM\n"
-            "  • 9:00 PM" 
-            + footer
-        )
+        msg.body("🌴 *Holiday Schedule*\n⬇️ *Towards AEC:*\n  • 7:30 AM (P) | • 10:40 AM (P)\n  • 2:30 PM (P) | • 5:10 PM (CF)\n  • 8:00 PM (CF)\n\n⬆️ *Leaving AEC:*\n  • 9:15 AM | • 12:15 PM (H)\n  • 3:45 PM | • 6:40 PM\n  • 9:00 PM" + footer)
 
     # --- 5. LIVE BUS TRACKING ---
     elif incoming_msg == '5':
@@ -115,14 +97,12 @@ def bot():
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/json"
             }
-            
             response = requests.get(TRACKING_URL, headers=headers)
             data = response.json()
             bus_list = data.get("deviceCumPositionList", [])
             
             if bus_list and len(bus_list) > 0:
-                final_message = "🛰️ *AEC Live Track* 🛰️\n_Real-time GPS Data_\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                
+                final_message = "🛰️ *AEC Live Track* 🛰️\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 for index, bus in enumerate(bus_list):
                     bus_num = index + 1
                     position = bus.get("position", {})
@@ -134,41 +114,38 @@ def bot():
                         final_message += f"🟢 *Bus {bus_num}:* Online\n📍 *Map:* {map_url}\n\n"
                     else:
                         final_message += f"🔴 *Bus {bus_num}:* Offline/Parked\n\n"
-                
-                final_message += "_System built and integrated by your AGS Candidate._" + footer
+                final_message += footer
                 msg.body(final_message)
-                
             else:
-                msg.body("⚠️ *AEC Live Track*\n\nNo buses currently active on the network." + footer)
-                
+                msg.body("⚠️ *AEC Live Track*\n\nNo buses currently active." + footer)
         except Exception as e:
-            print(f"API Error: {e}")
-            msg.body("🛠️ *System Notice*\n\nLive API bridge is currently refreshing. Please use the static schedules (Options 1-4) in the meantime." + footer)
+            msg.body("🛠️ *System Notice*\n\nAPI Bridge refreshing. Use Options 1-4 for now." + footer)
 
-    # --- 6. GRIEVANCE ---
+    # --- 6. TRIGGER GRIEVANCE MODE ---
     elif incoming_msg == '6':
+        # Put this specific user's phone number into "waiting for grievance" mode
+        user_states[sender_number] = 'waiting_for_grievance'
         msg.body(
-            "📝 *Submit a Grievance or Suggestion*\n\n"
-            "Your voice matters. Please type your issue or suggestion in a single message and hit send.\n\n"
-            "👁️ _I will personally review every message to improve our campus._\n\n"
-            "— *Your AGS Candidate*" 
-            + footer
+            "📝 *Submit a Grievance*\n\n"
+            "Please type your issue, suggestion, or request below and press send.\n\n"
+            "_(To cancel, reply *0*)_"
         )
 
     # --- 7. EXIT ---
     elif incoming_msg in ['7', 'exit', 'quit', 'bye']:
         msg.body(
-            "👋 *Thank you for using AEC Smart Transit!*\n\n"
-            "I hope this tool makes your campus life a little bit easier. If you found it helpful, I would be honored to have your support in the upcoming election.\n\n"
-            "🗳️ *Vote for Progress. Vote for Tech.*\n\n"
-            "_Type *0* anytime to wake me up again!_"
-            # Notice there is no footer added here, so the conversation feels naturally closed.
+            "👋 *Thanks for using AEC Smart Transit!*\n\n"
+            "I built this system from scratch because I believe our campus deserves better technical infrastructure.\n\n"
+            "If you agree, consider voting for *Arnab Anubhav Bora* for AGS. He is the candidate who supports real, student-led innovation like this.\n\n"
+            "👨‍💻 _Tech by Arindam Goswami (4th Sem CSE)_\n\n"
+            "Type *0* to return anytime."
         )
 
-    # --- MAIN MENU (0 or unrecognized input) ---
+    # --- MAIN MENU (0 or unrecognized) ---
     elif incoming_msg == '0' or incoming_msg == 'menu':
+        # Ensure we clear their state if they mash 0
+        user_states[sender_number] = 'normal'
         msg.body(main_menu_text)
-
     else:
         msg.body(main_menu_text)
         
