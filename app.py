@@ -1,15 +1,15 @@
-from flask import Flask, request, jsonify
+import os
 import requests
+from flask import Flask, request, jsonify
+from datetime import datetime
 
 app = Flask(__name__)
 
-# --- 1. YOUR META API CREDENTIALS ---
-# Paste the keys you just copied from the Meta Dashboard here:
-ACCESS_TOKEN = "EAAV1RSGn8ZBIBRW2RdO5Ra29eSXqW17ZBz22oYEkJiF9fLlZCQyYODAtkx2w4pZBhB06q4wwPtjyELgZCy8wZBmdhhSDVCSBFH1Owp51JAGZA5MghDkNYAHZANODAqLEvo1jEZBjxXtmoxF2sgKrhxBmcyNn3I6EtVDCuMcx2O4jfEjZACl2y9v480CkoAiyxHdwZDZD"
-PHONE_NUMBER_ID = "1070737896129431"
-
-# This is your custom password for the Webhook handshake. Do not change this right now.
-VERIFY_TOKEN = "aec_transit_secure_123" 
+# --- 1. SECURE CREDENTIALS (Pulled from Render Environment Variables) ---
+ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
+VERIFY_TOKEN = os.getenv('VERIFY_TOKEN')
+PHONE_NUMBER_ID = os.getenv('PHONE_NUMBER_ID')
+ADMIN_NUMBER = os.getenv('ADMIN_PHONE_NUMBER')  # Format: 91XXXXXXXXXX
 
 # --- IN-MEMORY DATABASE ---
 user_states = {} 
@@ -31,9 +31,9 @@ main_menu_text = (
 
 footer = "\n\n━━━━━━━━━━━━━━━━━━━━\n↩️ _Reply *0* for Main Menu_"
 
+# --- HELPER: SEND TEXT MESSAGE ---
 def send_whatsapp_message(to_number, message_text):
-    """Communicates directly with Meta's Graph API to send the message."""
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {ACCESS_TOKEN}",
         "Content-Type": "application/json"
@@ -45,49 +45,75 @@ def send_whatsapp_message(to_number, message_text):
         "text": {"body": message_text}
     }
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        # It's good practice to print the response in the server logs so you can debug in Render
-        print(f"Message send status: {response.status_code}") 
+        requests.post(url, headers=headers, json=payload)
     except Exception as e:
         print(f"Failed to send message: {e}")
 
+# --- HELPER: SEND INTERACTIVE LOCATION MESSAGE ---
+def send_interactive_location(to_number, body_text):
+    url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "header": {"type": "text", "text": "AEC Live Track 🛰️"},
+            "body": {"text": body_text},
+            "action": {
+                "buttons": [
+                    {
+                        "type": "reply",
+                        "reply": {"id": "refresh_loc", "title": "Refresh Location"}
+                    }
+                ]
+            }
+        }
+    }
+    try:
+        requests.post(url, headers=headers, json=payload)
+    except Exception as e:
+        print(f"Failed to send interactive message: {e}")
+
+# --- WEBHOOK ---
 @app.route("/webhook", methods=['GET', 'POST'])
 def webhook():
-    # --- 1. META VERIFICATION HANDSHAKE (GET) ---
-    # Meta hits this once when you connect the Webhook in their dashboard
     if request.method == 'GET':
         mode = request.args.get("hub.mode")
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
 
         if mode == "subscribe" and token == VERIFY_TOKEN:
-            print("WEBHOOK VERIFIED SUCCESSFULLY!")
             return challenge, 200
         return "Verification failed", 403
 
-    # --- 2. INCOMING MESSAGE HANDLER (POST) ---
-    # Meta hits this every time a student texts the bot
     if request.method == 'POST':
         data = request.get_json()
-
         try:
             if data.get('object') == 'whatsapp_business_account':
                 for entry in data.get('entry', []):
                     for change in entry.get('changes', []):
                         value = change.get('value', {})
                         
-                        # Meta sends delivery receipts too, we only want actual messages
                         if 'messages' in value:
                             msg_info = value['messages'][0]
                             sender_number = msg_info['from']
                             
-                            if msg_info['type'] == 'text':
+                            # Catch Interactive Button Clicks (The Refresh Button)
+                            if msg_info.get('type') == 'interactive':
+                                button_id = msg_info['interactive']['button_reply']['id']
+                                if button_id == "refresh_loc":
+                                    process_logic(sender_number, '5') # Triggers tracking logic again
+                            
+                            # Catch Standard Text
+                            elif msg_info.get('type') == 'text':
                                 incoming_msg = msg_info['text']['body'].lower().strip()
-                                
-                                # Pass the message to our logic brain
                                 process_logic(sender_number, incoming_msg)
                                 
-            # You MUST return 200 OK fast, or Meta thinks your server is dead
             return jsonify({"status": "ok"}), 200
             
         except Exception as e:
@@ -95,7 +121,6 @@ def webhook():
             return jsonify({"status": "error"}), 500
 
 def process_logic(sender_number, incoming_msg):
-    """The brain of the transit bot."""
     global user_states, grievances_db
 
     # --- SECRET ADMIN PANEL ---
@@ -116,11 +141,18 @@ def process_logic(sender_number, incoming_msg):
             send_whatsapp_message(sender_number, main_menu_text)
             return
             
+        # Log locally
         grievances_db.append(incoming_msg)
+        
+        # FORWARD TO ADMIN IMMEDIATELY
+        if ADMIN_NUMBER:
+            admin_alert = f"📢 *NEW AEC TRANSIT GRIEVANCE*\nFrom: {sender_number}\nIssue: {incoming_msg}"
+            send_whatsapp_message(ADMIN_NUMBER, admin_alert)
+
         user_states[sender_number] = 'normal'
         send_whatsapp_message(
             sender_number,
-            "✅ *Grievance Submitted Successfully*\n\nThank you. Your feedback has been securely logged.\n\n👨‍💻 _System built by Arindam Goswami_" + footer
+            "✅ *Grievance Submitted Successfully*\n\nThank you. Your feedback has been securely logged and forwarded to the admins.\n\n👨‍💻 _System built by Arindam Goswami_" + footer
         )
         return
 
@@ -150,7 +182,9 @@ def process_logic(sender_number, incoming_msg):
             bus_list = data.get("deviceCumPositionList", [])
             
             if bus_list and len(bus_list) > 0:
-                final_message = "🛰️ *AEC Live Track* 🛰️\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                timestamp = datetime.now().strftime("%I:%M %p")
+                body_text = f"Last Checked: {timestamp}\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                
                 for index, bus in enumerate(bus_list):
                     bus_num = index + 1
                     position = bus.get("position", {})
@@ -158,10 +192,12 @@ def process_logic(sender_number, incoming_msg):
                     real_lng = position.get("longitude")
                     if real_lat and real_lng:
                         map_url = f"https://www.google.com/maps/search/?api=1&query={real_lat},{real_lng}"
-                        final_message += f"🟢 *Bus {bus_num}:* Online\n📍 *Map:* {map_url}\n\n"
+                        body_text += f"🟢 *Bus {bus_num}:* Online\n📍 *Map:* {map_url}\n\n"
                     else:
-                        final_message += f"🔴 *Bus {bus_num}:* Offline/Parked\n\n"
-                send_whatsapp_message(sender_number, final_message + footer)
+                        body_text += f"🔴 *Bus {bus_num}:* Offline/Parked\n\n"
+                
+                # Send the compiled data WITH the interactive refresh button
+                send_interactive_location(sender_number, body_text)
             else:
                 send_whatsapp_message(sender_number, "⚠️ *AEC Live Track*\n\nNo buses currently active." + footer)
         except Exception as e:
@@ -182,4 +218,5 @@ def process_logic(sender_number, incoming_msg):
         send_whatsapp_message(sender_number, main_menu_text)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
