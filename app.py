@@ -1,7 +1,7 @@
 import os
 import requests
 from flask import Flask, request, jsonify
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 
@@ -182,7 +182,8 @@ def process_logic(sender_number, incoming_msg):
             bus_list = data.get("deviceCumPositionList", [])
             
             if bus_list and len(bus_list) > 0:
-                timestamp = datetime.now().strftime("%I:%M %p")
+                ist_timezone = timezone(timedelta(hours=5, minutes=30))
+                timestamp = datetime.now(ist_timezone).strftime("%I:%M %p")
                 body_text = f"Last Checked: {timestamp}\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 
                 for index, bus in enumerate(bus_list):
