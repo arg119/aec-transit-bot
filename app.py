@@ -5,6 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 
+@app.route('/ping', methods=['GET'])
+def keep_alive():
+    """This route is just for the external cron job to hit."""
+    return "Bot is awake!", 200
+
 # --- 1. SECURE CREDENTIALS (Pulled from Render Environment Variables) ---
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN')
