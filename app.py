@@ -178,7 +178,7 @@ def process_logic(sender_number, incoming_msg):
         try:
             TRACKING_URL = "http://track4.millitrack.com/api/users/166837/userDevicesState?pieChartOnly=false" 
             headers = {
-                "Cookie": "JSESSIONID=node0w0migg3gdmzh16kva25lphqf52493027.node0",
+                "Cookie": "JSESSIONID=node0whjhidc9pb25141vora39a3g4240502.node0",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Accept": "application/json"
             }
