@@ -5,22 +5,68 @@ from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 
-@app.route('/ping', methods=['GET'])
-def keep_alive():
-    """This route is just for the external cron job to hit."""
-    return "Bot is awake!", 200
-
-# --- 1. SECURE CREDENTIALS (Pulled from Render Environment Variables) ---
+# ==========================================
+# 1. SETUP & CREDENTIALS
+# ==========================================
 ACCESS_TOKEN = os.getenv('ACCESS_TOKEN')
 VERIFY_TOKEN = os.getenv('VERIFY_TOKEN')
 PHONE_NUMBER_ID = os.getenv('PHONE_NUMBER_ID')
 ADMIN_NUMBER = os.getenv('ADMIN_PHONE_NUMBER')  # Format: 91XXXXXXXXXX
 
+# Millitrack Auto-Login Credentials
+MILLITRACK_USER = os.getenv('MILLITRACK_USERNAME')
+MILLITRACK_PASS = os.getenv('MILLITRACK_PASSWORD')
+MILLITRACK_LOGIN = os.getenv('MILLITRACK_LOGIN_URL')
+
 # --- IN-MEMORY DATABASE ---
 user_states = {} 
 grievances_db = [] 
 
-# --- MENUS ---
+# ==========================================
+# 2. MILLITRACK API AUTOMATION
+# ==========================================
+# Global session remembers the cookie automatically
+api_session = requests.Session()
+
+def get_live_bus_data():
+    TRACKING_URL = "http://track4.millitrack.com/api/users/166837/userDevicesState?pieChartOnly=false"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
+    
+    # 1. Try to fetch data with the current session
+    response = api_session.get(TRACKING_URL, headers=headers)
+    try:
+        data = response.json()
+    except Exception:
+        data = {}
+    
+    # 2. Check if the session expired
+    if "deviceCumPositionList" not in data:
+        print("Cookie expired or invalid! Re-authenticating with Millitrack...")
+        
+        login_credentials = {
+            "email": MILLITRACK_USER,
+            "password": MILLITRACK_PASS
+        }
+        
+        # Log in to grab a fresh JSESSIONID
+        if MILLITRACK_LOGIN:
+            api_session.post(MILLITRACK_LOGIN, data=login_credentials)
+        
+        # 3. Retry the tracking URL with the fresh cookie
+        response = api_session.get(TRACKING_URL, headers=headers)
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
+
+    return data.get("deviceCumPositionList", [])
+
+# ==========================================
+# 3. MENUS & HELPERS
+# ==========================================
 main_menu_text = (
     "🚌 ✨ *AEC Smart Transit System* ✨ 🚌\n"
     "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -36,7 +82,6 @@ main_menu_text = (
 
 footer = "\n\n━━━━━━━━━━━━━━━━━━━━\n↩️ _Reply *0* for Main Menu_"
 
-# --- HELPER: SEND TEXT MESSAGE ---
 def send_whatsapp_message(to_number, message_text):
     url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -54,7 +99,6 @@ def send_whatsapp_message(to_number, message_text):
     except Exception as e:
         print(f"Failed to send message: {e}")
 
-# --- HELPER: SEND INTERACTIVE LOCATION MESSAGE ---
 def send_interactive_location(to_number, body_text):
     url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -84,7 +128,14 @@ def send_interactive_location(to_number, body_text):
     except Exception as e:
         print(f"Failed to send interactive message: {e}")
 
-# --- WEBHOOK ---
+# ==========================================
+# 4. ROUTES & WEBHOOK LOGIC
+# ==========================================
+@app.route('/ping', methods=['GET'])
+def keep_alive():
+    """Route for the external cron job to hit."""
+    return "Bot is awake!", 200
+
 @app.route("/webhook", methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
@@ -108,11 +159,11 @@ def webhook():
                             msg_info = value['messages'][0]
                             sender_number = msg_info['from']
                             
-                            # Catch Interactive Button Clicks (The Refresh Button)
+                            # Catch Interactive Button Clicks (Refresh Button)
                             if msg_info.get('type') == 'interactive':
                                 button_id = msg_info['interactive']['button_reply']['id']
                                 if button_id == "refresh_loc":
-                                    process_logic(sender_number, '5') # Triggers tracking logic again
+                                    process_logic(sender_number, '5')
                             
                             # Catch Standard Text
                             elif msg_info.get('type') == 'text':
@@ -146,10 +197,8 @@ def process_logic(sender_number, incoming_msg):
             send_whatsapp_message(sender_number, main_menu_text)
             return
             
-        # Log locally
         grievances_db.append(incoming_msg)
         
-        # FORWARD TO ADMIN IMMEDIATELY
         if ADMIN_NUMBER:
             admin_alert = f"📢 *NEW AEC TRANSIT GRIEVANCE*\nFrom: {sender_number}\nIssue: {incoming_msg}"
             send_whatsapp_message(ADMIN_NUMBER, admin_alert)
@@ -176,15 +225,8 @@ def process_logic(sender_number, incoming_msg):
 
     elif incoming_msg == '5':
         try:
-            TRACKING_URL = "http://track4.millitrack.com/api/users/166837/userDevicesState?pieChartOnly=false" 
-            headers = {
-                "Cookie": "JSESSIONID=node0whjhidc9pb25141vora39a3g4240502.node0",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json"
-            }
-            response = requests.get(TRACKING_URL, headers=headers)
-            data = response.json()
-            bus_list = data.get("deviceCumPositionList", [])
+            # Call the automated re-auth function
+            bus_list = get_live_bus_data()
             
             if bus_list and len(bus_list) > 0:
                 ist_timezone = timezone(timedelta(hours=5, minutes=30))
@@ -202,11 +244,11 @@ def process_logic(sender_number, incoming_msg):
                     else:
                         body_text += f"🔴 *Bus {bus_num}:* Offline/Parked\n\n"
                 
-                # Send the compiled data WITH the interactive refresh button
                 send_interactive_location(sender_number, body_text)
             else:
                 send_whatsapp_message(sender_number, "⚠️ *AEC Live Track*\n\nNo buses currently active." + footer)
         except Exception as e:
+            print(f"CRITICAL GPS ERROR: {e}")
             send_whatsapp_message(sender_number, "🛠️ *System Notice*\n\nAPI Bridge refreshing. Use Options 1-4 for now." + footer)
 
     elif incoming_msg == '6':
