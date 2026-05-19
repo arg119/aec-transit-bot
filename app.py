@@ -18,14 +18,14 @@ MILLITRACK_USER = os.getenv('MILLITRACK_USERNAME')
 MILLITRACK_PASS = os.getenv('MILLITRACK_PASSWORD')
 MILLITRACK_LOGIN = os.getenv('MILLITRACK_LOGIN_URL')
 
-# --- IN-MEMORY DATABASE ---
+# --- IN-MEMORY DATABASES ---
 user_states = {} 
 grievances_db = [] 
+users_db = set()  # Stores all phone numbers that interact with the bot
 
 # ==========================================
 # 2. MILLITRACK API AUTOMATION
 # ==========================================
-# Global session remembers the cookie automatically
 api_session = requests.Session()
 
 def get_live_bus_data():
@@ -65,7 +65,7 @@ def get_live_bus_data():
     return data.get("deviceCumPositionList", [])
 
 # ==========================================
-# 3. MENUS & HELPERS
+# 3. WHATSAPP API HELPERS
 # ==========================================
 main_menu_text = (
     "🚌 ✨ *AEC Smart Transit System* ✨ 🚌\n"
@@ -97,7 +97,7 @@ def send_whatsapp_message(to_number, message_text):
     try:
         requests.post(url, headers=headers, json=payload)
     except Exception as e:
-        print(f"Failed to send message: {e}")
+        print(f"Failed to send text message: {e}")
 
 def send_interactive_location(to_number, body_text):
     url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
@@ -128,12 +128,46 @@ def send_interactive_location(to_number, body_text):
     except Exception as e:
         print(f"Failed to send interactive message: {e}")
 
+def send_broadcast_template(to_number, alert_message):
+    url = f"https://graph.facebook.com/v21.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "template",
+        "template": {
+            "name": "aec_campus_alert", # Must match your approved Meta template name
+            "language": {"code": "en"},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {
+                            "type": "text", 
+                            "name": "bus_update", 
+                            "text": alert_message
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        return response.status_code
+    except Exception as e:
+        print(f"Broadcast failed for {to_number}: {e}")
+        return 500
+
 # ==========================================
 # 4. ROUTES & WEBHOOK LOGIC
 # ==========================================
 @app.route('/ping', methods=['GET'])
 def keep_alive():
-    """Route for the external cron job to hit."""
+    """Route for the external cron job to hit to prevent Render cold starts."""
     return "Bot is awake!", 200
 
 @app.route("/webhook", methods=['GET', 'POST'])
@@ -177,9 +211,31 @@ def webhook():
             return jsonify({"status": "error"}), 500
 
 def process_logic(sender_number, incoming_msg):
-    global user_states, grievances_db
+    global user_states, grievances_db, users_db
 
-    # --- SECRET ADMIN PANEL ---
+    # Log user number for future broadcasts
+    users_db.add(sender_number)
+
+    # --- SECRET ADMIN COMMANDS ---
+    
+    # 1. Admin Broadcast Command
+    if incoming_msg.startswith('alert:'):
+        if sender_number == ADMIN_NUMBER:
+            alert_text = incoming_msg.split('alert:', 1)[1].strip()
+            send_whatsapp_message(sender_number, f"⏳ Initiating broadcast to {len(users_db)} active students...")
+            
+            success_count = 0
+            for student_number in users_db:
+                status = send_broadcast_template(student_number, alert_text)
+                if status == 200:
+                    success_count += 1
+            
+            send_whatsapp_message(sender_number, f"✅ Broadcast complete. Delivered to {success_count}/{len(users_db)} students.")
+        else:
+            send_whatsapp_message(sender_number, "⛔ Unauthorized command.")
+        return
+
+    # 2. Admin Grievance Panel
     if incoming_msg == 'admin99':
         if len(grievances_db) == 0:
             send_whatsapp_message(sender_number, "📂 *Admin Panel*\n\nNo grievances yet." + footer)
@@ -210,7 +266,7 @@ def process_logic(sender_number, incoming_msg):
         )
         return
 
-    # --- MENU ROUTING ---
+    # --- MAIN MENU ROUTING ---
     if incoming_msg == '1':
         send_whatsapp_message(sender_number, "🗺️ *To AEC (from CF / Ganeshguri)*\n_Regular Weekday Schedule_\n\n📍 *Via Ganeshguri ➔ Zoo Road:*\n  • 7:00 AM | • 8:00 AM\n\n📍 *Via Ganeshguri ➔ Highway:*\n  • 7:00 AM | • 8:10 AM\n\n📍 *Direct from Church Field:*\n  • 11:40 AM | • 4:20 PM\n  • 5:30 PM  | • 7:20 PM\n  • 7:45 PM  | • 8:15 PM\n\n🌟 *Special Route (9:40 AM)*\n_(CF ➔ Paltan ➔ Ganesh ➔ Highway)_" + footer)
         
@@ -225,7 +281,7 @@ def process_logic(sender_number, incoming_msg):
 
     elif incoming_msg == '5':
         try:
-            # Call the automated re-auth function
+            # Call the automated re-auth function for Live Tracking
             bus_list = get_live_bus_data()
             
             if bus_list and len(bus_list) > 0:
