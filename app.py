@@ -147,7 +147,8 @@ def send_broadcast_template(to_number, alert_message):
                     "parameters": [
                         {
                             "type": "text", 
-                            # If you used {{1}} in Meta, DELETE the line below. If you used {{bus_update}}, keep it! 
+                            # If you used {{1}} in Meta, DELETE the line below. If you used {{bus_update}}, keep it!
+                            "name": "bus_update", 
                             "text": alert_message
                         }
                     ]
