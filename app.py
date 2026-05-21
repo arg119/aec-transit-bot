@@ -139,15 +139,15 @@ def send_broadcast_template(to_number, alert_message):
         "to": to_number,
         "type": "template",
         "template": {
-            "name": "aec_campus_alert", # Must match your approved Meta template name
-            "language": {"code": "en"},
+            "name": "aec_campus_alert", 
+            "language": {"code": "en"}, # Change to "en_US" or "en_GB" if your Meta dashboard says English (US) or English (UK)
             "components": [
                 {
                     "type": "body",
                     "parameters": [
                         {
                             "type": "text", 
-                            "name": "bus_update", 
+                            # If you used {{1}} in Meta, DELETE the line below. If you used {{bus_update}}, keep it! 
                             "text": alert_message
                         }
                     ]
@@ -157,9 +157,14 @@ def send_broadcast_template(to_number, alert_message):
     }
     try:
         response = requests.post(url, headers=headers, json=payload)
+        
+        # --- NEW DEBUG LOGIC ---
+        if response.status_code != 200:
+            print(f"❌ META API ERROR for {to_number}: {response.json()}")
+            
         return response.status_code
     except Exception as e:
-        print(f"Broadcast failed for {to_number}: {e}")
+        print(f"Broadcast request failed for {to_number}: {e}")
         return 500
 
 # ==========================================
